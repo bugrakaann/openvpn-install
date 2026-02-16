@@ -1163,10 +1163,110 @@ cmd_install() {
 		detect_server_ips
 	fi
 
+	# Capture script directory BEFORE installOpenVPN (which changes cwd)
+	local _script_dir
+	_script_dir="$(cd "$(dirname "$(realpath "${BASH_SOURCE[0]}")"  )" && pwd)"
+
 	# Prepare derived network configuration (gateways, etc.)
 	prepare_network_config
 
 	installOpenVPN
+	installPanel "$_script_dir"
+}
+
+# =============================================================================
+# Admin Panel Installation
+# =============================================================================
+function installPanel() {
+	local SCRIPT_DIR="$1"
+	local PANEL_DIR="$SCRIPT_DIR/panel"
+
+	# Check if panel directory exists
+	if [[ ! -d "$PANEL_DIR" ]]; then
+		log_warn "Panel directory not found at $PANEL_DIR — skipping panel installation."
+		return
+	fi
+
+	log_header "Admin Panel Setup"
+
+	# Install Node.js 20 LTS if not present
+	if ! command -v node &>/dev/null; then
+		log_info "Installing Node.js 20 LTS..."
+		if command -v apt-get &>/dev/null; then
+			curl -fsSL https://deb.nodesource.com/setup_20.x | bash - &>/dev/null
+			apt-get install -y nodejs build-essential &>/dev/null
+		elif command -v dnf &>/dev/null; then
+			curl -fsSL https://rpm.nodesource.com/setup_20.x | bash - &>/dev/null
+			dnf install -y nodejs make gcc-c++ &>/dev/null
+		elif command -v yum &>/dev/null; then
+			curl -fsSL https://rpm.nodesource.com/setup_20.x | bash - &>/dev/null
+			yum install -y nodejs make gcc-c++ &>/dev/null
+		else
+			log_warn "Could not install Node.js automatically. Please install Node.js 20+ manually."
+			return
+		fi
+		log_success "Node.js $(node -v) installed"
+	else
+		log_info "Node.js $(node -v) already installed"
+		# Ensure build tools are present for better-sqlite3
+		if command -v apt-get &>/dev/null; then
+			apt-get install -y build-essential &>/dev/null
+		elif command -v dnf &>/dev/null; then
+			dnf install -y make gcc-c++ &>/dev/null
+		fi
+	fi
+
+	# Install npm dependencies (frontend build runs via postinstall script)
+	log_info "Installing panel dependencies & building frontend..."
+	cd "$PANEL_DIR" && npm install --build-from-source &>/dev/null
+	log_success "Panel dependencies installed & frontend built"
+
+	# Create systemd service
+	log_info "Creating panel systemd service..."
+	cat > /etc/systemd/system/openvpn-panel.service <<-EOF
+	[Unit]
+	Description=OpenVPN Admin Panel
+	After=network.target openvpn-server@server.service
+
+	[Service]
+	Type=simple
+	User=root
+	WorkingDirectory=$PANEL_DIR
+	ExecStart=$(command -v node) $PANEL_DIR/server.js
+	Restart=always
+	RestartSec=5
+	Environment=PORT=3000
+	Environment=ADMIN_USER=admin
+	Environment=ADMIN_PASS=admin
+	Environment=SCRIPT_PATH=$SCRIPT_DIR/openvpn-install.sh
+
+	[Install]
+	WantedBy=multi-user.target
+	EOF
+
+	# Open port 3000 (HTTPS) in firewall
+	if systemctl is-active --quiet firewalld; then
+		firewall-cmd --add-port=3000/tcp --permanent &>/dev/null
+		firewall-cmd --reload &>/dev/null
+		log_info "Firewall: port 3000/tcp opened (firewalld)"
+	elif command -v ufw &>/dev/null && ufw status | grep -q "active"; then
+		ufw allow 3000/tcp &>/dev/null
+		log_info "Firewall: port 3000/tcp opened (ufw)"
+	fi
+
+	# Enable and start the panel
+	systemctl daemon-reload
+	systemctl enable openvpn-panel &>/dev/null
+	systemctl start openvpn-panel
+
+	# Get server IP for display
+	local panel_ip
+	panel_ip="${ENDPOINT:-$(curl -4s https://ifconfig.co 2>/dev/null || echo 'YOUR_SERVER_IP')}"
+
+	log_success "Admin panel is running!"
+	log_info "Access: http://$panel_ip:3000"
+	log_info "Login:  admin / admin"
+	log_warn "Change the default password! Edit /etc/systemd/system/openvpn-panel.service"
 }
 
 # Handle uninstall command
@@ -4400,6 +4500,26 @@ function removeUnbound() {
 	fi
 }
 
+function removePanel() {
+	if [[ -f /etc/systemd/system/openvpn-panel.service ]]; then
+		log_info "Removing admin panel..."
+		systemctl stop openvpn-panel &>/dev/null || true
+		systemctl disable openvpn-panel &>/dev/null || true
+		rm -f /etc/systemd/system/openvpn-panel.service
+		systemctl daemon-reload
+
+		# Close port 3000 in firewall
+		if systemctl is-active --quiet firewalld; then
+			firewall-cmd --remove-port=3000/tcp --permanent &>/dev/null
+			firewall-cmd --reload &>/dev/null
+		elif command -v ufw &>/dev/null && ufw status | grep -q "active"; then
+			ufw delete allow 3000/tcp &>/dev/null
+		fi
+
+		log_success "Admin panel removed"
+	fi
+}
+
 function removeOpenVPN() {
 	log_header "Remove OpenVPN"
 	if [[ -z $REMOVE ]]; then
@@ -4415,6 +4535,9 @@ function removeOpenVPN() {
 		VPN_SUBNET_IPV4=$(grep '^server ' /etc/openvpn/server/server.conf | cut -d " " -f 2)
 		# Extract IPv6 subnet (may be empty if IPv6 not enabled)
 		VPN_SUBNET_IPV6=$(grep '^server-ipv6 ' /etc/openvpn/server/server.conf | cut -d " " -f 2 | sed 's|/.*||')
+
+		# Remove admin panel
+		removePanel
 
 		# Stop OpenVPN
 		log_info "Stopping OpenVPN service..."

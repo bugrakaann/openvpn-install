@@ -1,0 +1,14 @@
+node_modules
+panel/node_modules
+panel/frontend/node_modules
+panel/public/assets
+panel/data/*.db
+panel/data/*.pem
+.git
+.gitignore
+.dockerignore
+npm-debug.log
+**/dist
+**/build
+.env
+.env.local

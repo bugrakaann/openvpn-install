@@ -26,8 +26,11 @@ COPY panel/ /opt/panel/
 
 # Build frontend separately (needs devDependencies like vite)
 WORKDIR /opt/panel/frontend
+COPY panel/frontend/package*.json ./
 RUN npm install
-RUN npm run build
+COPY panel/frontend/ ./
+# Vite izin hatasını çözmek için
+RUN npx vite build
 
 # Install backend dependencies (production only)
 WORKDIR /opt/panel

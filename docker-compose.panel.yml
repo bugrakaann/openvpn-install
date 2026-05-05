@@ -12,7 +12,6 @@ services:
     container_name: openvpn-server
     hostname: openvpn-server
     privileged: true
-    cgroupns: host
     devices:
       - /dev/net/tun:/dev/net/tun
     sysctls:

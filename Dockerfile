@@ -2,6 +2,10 @@ ARG BASE_IMAGE=ubuntu:24.04
 FROM ${BASE_IMAGE}
 
 ENV DEBIAN_FRONTEND=noninteractive
+ENV container docker
+
+# Systemd needs this to run correctly in Docker
+STOPSIGNAL SIGRTMIN+3
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \

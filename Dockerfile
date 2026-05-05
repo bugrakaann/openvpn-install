@@ -23,8 +23,15 @@ RUN chmod +x /opt/openvpn-install.sh
 
 # Copy the admin panel
 COPY panel/ /opt/panel/
+
+# Build frontend separately (needs devDependencies like vite)
+WORKDIR /opt/panel/frontend
+RUN npm install
+RUN npm run build
+
+# Install backend dependencies (production only)
 WORKDIR /opt/panel
-RUN npm install --production
+RUN npm install --omit=dev
 
 # Create systemd service for the admin panel
 RUN printf '%s\n' \

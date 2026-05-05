@@ -6,8 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "build:frontend": "cd frontend && npm install && npm run build",
-    "postinstall": "cd frontend && npm install && npm run build"
+    "build:frontend": "cd frontend && npm install && npm run build"
   },
   "dependencies": {
     "better-sqlite3": "^11.0.0",
